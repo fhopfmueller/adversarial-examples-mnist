@@ -1,6 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 import mnist_classifier
+from matplotlib.widgets import Slider
 
 def main():
     model = mnist_classifier.Net()
@@ -11,84 +12,71 @@ def main():
     x = tmp[0]
     del(tmp)
 
-    print("first sample: ground truth", y[0],
-    "\nmodel says ", model(x[0:1, ...]).exp())
+    print("sample: ground truth", y[0],
+            "\nmodel predictions: ", model(x[0:1, ...]).exp().detach().numpy())
 
     #let's find the gradient of the p to be 5, wrt the input.
-    sample = x[0:1, ...]
+    sample = x[0:1, ...] #keep first dimension with 1 element around cause that's what the model needs
     sample.requires_grad=True
     output = model(sample).exp()[..., 5]
     print("output:", output)
     output.backward()
-    print("shape of gradient at sample:", sample.grad.shape)
     print("L2 norm of gradient", sample.grad.norm())
     print("maximum of gradient", sample.grad.abs().max())
-    print("range of input", x.min(), x.max())
 
     scale=30
-    #the gradients for the p to be anything:
-    sample.grad.zero_()
-    output = model(sample).exp()[..., 3]
-    print("output:", output)
-    output.backward()
-    print("shape of gradient at sample:", sample.grad.shape)
-    print("L2 norms of gradient", sample.grad.norm())
-    print("maximum of gradient", sample.grad.abs().max())
-
-    adv_sample = sample + scale*sample.grad
+    perturbation = -scale*sample.grad
+    adv_sample = perturb(sample, perturbation)
     adv_output = model(adv_sample).exp()
     print("output on adv sample:", adv_output)
 
     #visualize
+    plt.ion()
     fig = plt.figure()
-    ax1 = fig.add_subplot(131)
-    ax2 = fig.add_subplot(132)
-    ax3 = fig.add_subplot(133)
+    #hidpi workaround
+    fig.dpi = 2*fig.dpi
+    ax_original_img = fig.add_subplot(231)
+    ax_perturbation_img = fig.add_subplot(232)
+    ax_adversarial_img = fig.add_subplot(233)
+    ax_original_predictions = fig.add_subplot(234)
+    ax_adversarial_predictions = fig.add_subplot(236)
 
-    ax1.imshow(sample.detach()[0,0,:,:], cmap='gray')
-    ax2.imshow(sample.grad.detach()[0,0,:,:], cmap='gray')
-    ax3.imshow(adv_sample.detach()[0,0,:,:], cmap='gray')
+    ax_slider = fig.add_subplot(235)
+    slider_scale = Slider(ax_slider, 'scale', 0, 100., valinit = 0.) 
 
-    plt.show()
+    adv_sample = perturb(sample, perturbation)
+    original_img = sample.detach()[0,0,:,:]
+    ax_original_img.imshow(original_img, cmap='gray')
+    ax_perturbation_img.imshow(perturbation.detach()[0,0,:,:], cmap='gray')
+    adv_imshow = ax_adversarial_img.imshow(adv_sample.detach()[0,0,:,:], cmap='gray')
+    ax_original_predictions.bar(range(10), model(sample).exp().detach()[0,:])
+    ax_original_predictions.set_ylim(0., 1.)
+    adv_bar_rects = ax_adversarial_predictions.bar(range(10), model(adv_sample).exp().detach()[0,:])
+    ax_adversarial_predictions.set_ylim(0., 1.)
+
+    def update(val):
+        scale = slider_scale.val
+        perturbation = -scale*sample.grad
+        adv_sample = perturb(sample, perturbation)
+        adv_imshow = ax_adversarial_img.imshow(adv_sample.detach()[0,0,:,:], cmap='gray')
+        adv_predictions = model(adv_sample).exp().detach()[0, :]
+        [rect.set_height(h) for rect, h in zip(adv_bar_rects, adv_predictions)]
+        fig.canvas.draw()
 
 
-def probs(tensor):
-    return model(tensor).exp()
+    slider_scale.on_changed(update)
 
-#not working...
-def constrained_gd( f, parameters, constraint, lr=.1, its=100 ):
-    # function: a scalar function with argument of type parameters
-    # parameters: a torch tensor
-    # constraints: a function of parameters which will be enforced to be \le 0
-    # returns: the locus x of the minimum of function, the lagrange multiplier (if it's zero, the constraint is saturated)
-    x = parameters.clone()
-    x.requires_grad = True
-    lm = torch.Tensor([1.])
-    lm.requires_grad = True
-    #lagrangian.backward(retain_graph=True)
 
-    for i in range(its):
-        lagrangian = f(x) - lm * lm * constraint(x)
-        lagrangian.backward()
-        print(lagrangian, x, lm)
-        with torch.no_grad():
-            x = x - lr * x.grad
-            lm = lm - lr * lm.grad
-        x.requires_grad=True
-        lm.requires_grad=True
-    return x,lm
+
+
+
+    input("press enter...")
+
+def perturb(image, perturbation):
+    #makes sure image+perturbation keeps the same range, which is -0.4242 until 2.8215.
+    out = image + perturbation
+    out = out.clamp(-.4242, 2.8215)
+    return out
 
 if __name__=='__main__':
     main()
-    #def f(t):
-    #    return t[0]*t[1]
-    #def c(t):
-    #    return t[0]*t[0] + t[1]*t[1] - 1.
-
-    #t = torch.Tensor( [1.5, 1.])
-    #print(t)
-    #print(f(t))
-    #print(c(t))
-    #x,_=constrained_gd(f, t, c)
-    #print(c(x))
-
